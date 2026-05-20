@@ -7,11 +7,17 @@ namespace px4_control {
 struct PDGains {
   Eigen::Vector3d kp_pos{1.5, 1.5, 3.0};
   Eigen::Vector3d kd_pos{1.2, 1.2, 2.5};
-  Eigen::Vector3d kp_att{6.0, 6.0, 2.0};
-  Eigen::Vector3d kd_att{0.8, 0.8, 0.4};
-  double hover_thrust = 0.5;
+  // Attitude PD operates on ln(q_e) (≈ half-angle-axis), so values
+  // here are ~2× the equivalent matrix-vee-map gains.
+  Eigen::Vector3d kp_att{12.0, 12.0, 4.0};
+  Eigen::Vector3d kd_att{1.6, 1.6, 0.8};
+  // Vehicle-body inertia (diagonal, kg·m²) — used for J·u + ω×Jω.
+  Eigen::Vector3d inertia{0.029, 0.029, 0.055};
+  // tanh saturation on the angular-acceleration command (rad/s²).
+  double krmax = 50.0;
+  double hover_thrust = 2000;
   double max_tilt_rad = 0.5;
-  double max_accel_xy = 6.0;
+  double max_accel_xy = 10.0;
   Eigen::Vector3d max_torque{0.5, 0.5, 0.2};
 };
 

@@ -83,7 +83,9 @@ void Px4ControlNode::loadParameters() {
   declare_vec3("kd_pos", g.kd_pos);
   declare_vec3("kp_att", g.kp_att);
   declare_vec3("kd_att", g.kd_att);
+  declare_vec3("inertia", g.inertia);
   declare_vec3("max_torque", g.max_torque);
+  g.krmax = declare_parameter<double>("krmax", g.krmax);
   g.hover_thrust = declare_parameter<double>("hover_thrust", g.hover_thrust);
   g.max_tilt_rad = declare_parameter<double>("max_tilt_rad", g.max_tilt_rad);
   g.max_accel_xy = declare_parameter<double>("max_accel_xy", g.max_accel_xy);
