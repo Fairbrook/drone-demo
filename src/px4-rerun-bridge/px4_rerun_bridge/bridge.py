@@ -14,14 +14,81 @@ import math
 
 import rclpy
 import rerun as rr
+import rerun.blueprint as rrb
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from px4_control.msg import DroneState, PDDiagnostics
 
+# Per-component series styling. Without these the auto-legend just shows the
+# full entity path, which makes overlaid plots unreadable.
+_XYZ = ("x", "y", "z")
+_RPY = ("roll", "pitch", "yaw")
+_PQR = ("p", "q", "r")
+_AXIS_COLORS = {
+    "x": [220, 60, 60], "y": [60, 200, 80], "z": [80, 120, 240],
+    "roll": [220, 60, 60], "pitch": [60, 200, 80], "yaw": [80, 120, 240],
+    "p": [220, 60, 60], "q": [60, 200, 80], "r": [80, 120, 240],
+}
+_VEC3_GROUPS = (
+    ("errors/position", _XYZ),
+    ("errors/velocity", _XYZ),
+    ("errors/attitude", _RPY),
+    ("errors/rate", _PQR),
+    ("cmd/thrust", _XYZ),
+    ("cmd/torque", _RPY),
+    ("ref/desired_accel", _XYZ),
+)
+
 
 def _stamp_to_seconds(stamp) -> float:
     return float(stamp.sec) + float(stamp.nanosec) * 1e-9
+
+
+def _build_blueprint() -> rrb.Blueprint:
+    # Rerun's default auto-blueprint folds every scalar into a single overflowing
+    # view, which hides most per-axis errors and commands. Pin one view per group
+    # so each component stays visible.
+    return rrb.Blueprint(
+        rrb.Vertical(
+            rrb.Horizontal(
+                rrb.Spatial3DView(name="World", origin="/world"),
+                rrb.Vertical(
+                    rrb.TimeSeriesView(name="Position error [m]",
+                                       origin="/errors/position"),
+                    rrb.TimeSeriesView(name="Velocity error [m/s]",
+                                       origin="/errors/velocity"),
+                ),
+                rrb.Vertical(
+                    rrb.TimeSeriesView(name="Attitude error [rad]",
+                                       origin="/errors/attitude"),
+                    rrb.TimeSeriesView(name="Rate error [rad/s]",
+                                       origin="/errors/rate"),
+                ),
+            ),
+            rrb.Horizontal(
+                rrb.TimeSeriesView(name="Thrust cmd (FRD, norm)",
+                                   origin="/cmd/thrust"),
+                rrb.TimeSeriesView(name="Torque cmd (FRD, norm)",
+                                   origin="/cmd/torque"),
+                rrb.TimeSeriesView(name="Desired accel [m/s^2]",
+                                   origin="/ref/desired_accel"),
+            ),
+            rrb.Horizontal(
+                rrb.TimeSeriesView(name="Yaw [deg]", origin="/ref/yaw"),
+                rrb.TimeSeriesView(name="Position X [m]",
+                                   origin="/ref/position_x"),
+                rrb.TimeSeriesView(name="Position Y [m]",
+                                   origin="/ref/position_y"),
+                rrb.TimeSeriesView(name="Position Z [m]",
+                                   origin="/ref/position_z"),
+            ),
+            rrb.TimeSeriesView(name="Status", origin="/status"),
+            row_shares=[3, 2, 2, 2],
+        ),
+        rrb.SelectionPanel(state="collapsed"),
+        rrb.TimePanel(state="collapsed"),
+    )
 
 
 class RerunBridge(Node):
@@ -39,13 +106,15 @@ class RerunBridge(Node):
         save_path = self.get_parameter(
             "save_path").get_parameter_value().string_value
 
+        blueprint = _build_blueprint()
+
         # Initialize Rerun. If save_path is set we record to file instead of opening a viewer.
         if save_path:
-            rr.init(app_id, spawn=False)
+            rr.init(app_id, spawn=False, default_blueprint=blueprint)
             rr.save(save_path)
             self.get_logger().info(f"Rerun recording to {save_path}")
         else:
-            rr.init(app_id, spawn=spawn)
+            rr.init(app_id, spawn=spawn, default_blueprint=blueprint)
             self.get_logger().info(
                 "Rerun viewer " +
                 ("spawned" if spawn else "init only — connect manually")
@@ -61,6 +130,32 @@ class RerunBridge(Node):
                         colors=[[150, 150, 150]]),
             static=True,
         )
+
+        # Static styling for each scalar series so legends show "x/y/z" (not
+        # the full entity path) and the three components share consistent colors.
+        for group, axes in _VEC3_GROUPS:
+            for axis in axes:
+                rr.log(
+                    f"{group}/{axis}",
+                    rr.SeriesLines(names=[axis],
+                                   colors=[_AXIS_COLORS[axis]]),
+                    static=True,
+                )
+        rr.log("ref/yaw/measured",
+               rr.SeriesLines(names=["measured"], colors=[[60, 200, 80]]),
+               static=True)
+        rr.log("ref/yaw/target",
+               rr.SeriesLines(names=["target"], colors=[[230, 60, 60]]),
+               static=True)
+        for axis in _XYZ:
+            rr.log(f"ref/position_{axis}/measured",
+                   rr.SeriesLines(names=["measured"],
+                                  colors=[[60, 200, 80]]),
+                   static=True)
+            rr.log(f"ref/position_{axis}/target",
+                   rr.SeriesLines(names=["target"],
+                                  colors=[[230, 60, 60]]),
+                   static=True)
 
         # QoS — diagnostics are BEST_EFFORT from the controller, DroneState is RELIABLE.
         be_qos = QoSProfile(
@@ -87,7 +182,7 @@ class RerunBridge(Node):
     # ------------------------------------------------------------------
 
     def _on_diag(self, msg: PDDiagnostics) -> None:
-        #        rr.set_time_seconds("ros_time", _stamp_to_seconds(msg.header.stamp))
+        rr.set_time("ros_time", duration=_stamp_to_seconds(msg.header.stamp))
 
         # 3D scene: drone + target + desired-accel arrow.
         p = list(msg.position)
@@ -119,30 +214,29 @@ class RerunBridge(Node):
                             p], colors=[[80, 160, 240]]),
             )
 
-        # Per-axis scalar streams. Group under one entity each so Rerun
-        # auto-plots the three components together.
-        self._log_vec3("errors/position", msg.position_error, ("x", "y", "z"))
-        self._log_vec3("errors/velocity", msg.velocity_error, ("x", "y", "z"))
-        self._log_vec3("errors/attitude", msg.attitude_error,
-                       ("roll", "pitch", "yaw"))
-        self._log_vec3("errors/rate", msg.rate_error, ("p", "q", "r"))
-        self._log_vec3("cmd/thrust", msg.thrust_body, ("x", "y", "z"))
-        self._log_vec3("cmd/torque", msg.torque_body, ("roll", "pitch", "yaw"))
-        self._log_vec3("ref/desired_accel", msg.desired_accel, ("x", "y", "z"))
+        # Per-axis scalar streams. Each sibling path becomes a series in the
+        # group's TimeSeriesView (pinned by the blueprint above).
+        self._log_vec3("errors/position", msg.position_error, _XYZ)
+        self._log_vec3("errors/velocity", msg.velocity_error, _XYZ)
+        self._log_vec3("errors/attitude", msg.attitude_error, _RPY)
+        self._log_vec3("errors/rate", msg.rate_error, _PQR)
+        self._log_vec3("cmd/thrust", msg.thrust_body, _XYZ)
+        self._log_vec3("cmd/torque", msg.torque_body, _RPY)
+        self._log_vec3("ref/desired_accel", msg.desired_accel, _XYZ)
 
         # Yaw vs yaw target as degrees on the same plot.
         rr.log("ref/yaw/measured", rr.Scalars([math.degrees(msg.yaw)]))
         rr.log("ref/yaw/target", rr.Scalars([math.degrees(msg.yaw_target)]))
 
         # Position vs target per axis (for tracking-error plots).
-        for i, axis in enumerate(("x", "y", "z")):
+        for i, axis in enumerate(_XYZ):
             rr.log(f"ref/position_{axis}/measured",
                    rr.Scalars([float(msg.position[i])]))
             rr.log(f"ref/position_{axis}/target",
                    rr.Scalars([float(msg.position_target[i])]))
 
     def _on_state(self, msg: DroneState) -> None:
-        # rr.set_time_seconds("ros_time", _stamp_to_seconds(msg.header.stamp))
+        rr.set_time("ros_time", duration=_stamp_to_seconds(msg.header.stamp))
 
         # Battery + arming + mode as time-aligned scalars / text.
         rr.log("status/battery_voltage_v",
