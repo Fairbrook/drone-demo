@@ -6,14 +6,14 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     args = [
-        DeclareLaunchArgument("kp_pos", default_value="[1.5, 1.5, 3.0]"),
+        DeclareLaunchArgument("kp_pos", default_value="[1.5, 1.5, 4.0]"),
         DeclareLaunchArgument("kd_pos", default_value="[1.2, 1.2, 2.5]"),
         DeclareLaunchArgument("kp_att", default_value="[12.0, 12.0, 4.0]"),
         DeclareLaunchArgument("kd_att", default_value="[1.6, 1.6, 0.8]"),
         DeclareLaunchArgument("inertia", default_value="[0.029, 0.029, 0.055]"),
-        DeclareLaunchArgument("krmax", default_value="50.0"),
+        DeclareLaunchArgument("krmax", default_value="5000.0"),
         DeclareLaunchArgument("max_torque", default_value="[0.5, 0.5, 0.2]"),
-        DeclareLaunchArgument("hover_thrust", default_value="0.5"),
+        DeclareLaunchArgument("hover_thrust", default_value="1.0"),
         DeclareLaunchArgument("max_tilt_rad", default_value="0.5"),
         DeclareLaunchArgument("max_accel_xy", default_value="6.0"),
     ]
